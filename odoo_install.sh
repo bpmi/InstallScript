@@ -25,8 +25,14 @@ OE_PORT="8069"
 # Choose the Odoo version which you want to install. For example: 16.0, 15.0, 14.0 or saas-22. When using 'master' the master version will be installed.
 # IMPORTANT! This script contains extra libraries that are specifically needed for Odoo 16.0
 OE_VERSION="16.0"
+# Install Python?
+INSTALL_PYTHON="False"
+# Choose the version of Python for creating a virtualenv
+PYTHON_VIRTUALENV_VERSION="3.9.16"
 # Set this to True if you want to install the Odoo enterprise version!
 IS_ENTERPRISE="False"
+# Only install postgreSQL if desired
+INSTALL_POSTGRESQL="False"
 # Installs postgreSQL V14 instead of defaults (e.g V12 for Ubuntu 20/22) - this improves performance
 INSTALL_POSTGRESQL_FOURTEEN="True"
 # Set this to True if you want to install Nginx!
@@ -68,32 +74,36 @@ sudo apt-get install libpq-dev
 #--------------------------------------------------
 # Install PostgreSQL Server
 #--------------------------------------------------
-echo -e "\n---- Install PostgreSQL Server ----"
-if [ $INSTALL_POSTGRESQL_FOURTEEN = "True" ]; then
-    echo -e "\n---- Installing postgreSQL V14 due to the user it's choise ----"
-    sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc|sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
-    sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-    sudo apt-get update
-    sudo apt-get install postgresql-14
+if [ $INSTALL_POSTGRESQL = "True" ]; then
+    echo -e "\n---- Install PostgreSQL Server ----"
+    if [ $INSTALL_POSTGRESQL_FOURTEEN = "True" ]; then
+        echo -e "\n---- Installing postgreSQL V14 due to the user it's choise ----"
+        sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc|sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+        sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+        sudo apt-get update
+        sudo apt-get install postgresql-14
+    else
+        echo -e "\n---- Installing the default postgreSQL version based on Linux version ----"
+        sudo apt-get install postgresql postgresql-server-dev-all -y
+    fi
+
+    echo -e "\n---- Creating the ODOO PostgreSQL User  ----"
+    sudo su - postgres -c "createuser -s $OE_USER" 2> /dev/null || true
 else
-    echo -e "\n---- Installing the default postgreSQL version based on Linux version ----"
-    sudo apt-get install postgresql postgresql-server-dev-all -y
+    echo -e "\n---- Installing the PostgreSQL Client  ----"
+    sudo apt install postgresql-client
 fi
-
-
-echo -e "\n---- Creating the ODOO PostgreSQL User  ----"
-sudo su - postgres -c "createuser -s $OE_USER" 2> /dev/null || true
-
 #--------------------------------------------------
 # Install Dependencies
 #--------------------------------------------------
-echo -e "\n--- Installing Python 3 + pip3 --"
-sudo apt-get install python3 python3-pip
-sudo apt-get install git python3-cffi build-essential wget python3-dev python3-venv python3-wheel libxslt-dev libzip-dev libldap2-dev libsasl2-dev python3-setuptools node-less libpng-dev libjpeg-dev gdebi -y
+if [ $INSTALL_PYTHON = "True" ]; then
+    echo -e "\n--- Installing Python 3 + pip3 --"
+    sudo apt-get install python3 python3-pip
+    sudo apt-get install git python3-cffi build-essential wget python3-dev python3-venv python3-wheel libxslt-dev libzip-dev libldap2-dev libsasl2-dev python3-setuptools node-less libpng-dev libjpeg-dev gdebi -y
 
-echo -e "\n---- Install python packages/requirements ----"
-sudo -H pip3 install -r https://github.com/odoo/odoo/raw/${OE_VERSION}/requirements.txt
-
+    echo -e "\n---- Install python packages/requirements ----"
+    sudo -H pip3 install -r https://github.com/odoo/odoo/raw/${OE_VERSION}/requirements.txt
+fi
 echo -e "\n---- Installing nodeJS NPM and rtlcss for LTR support ----"
 sudo apt-get install nodejs npm -y
 sudo npm install -g rtlcss
@@ -125,6 +135,42 @@ sudo adduser $OE_USER sudo
 echo -e "\n---- Create Log directory ----"
 sudo mkdir /var/log/$OE_USER
 sudo chown $OE_USER:$OE_USER /var/log/$OE_USER
+
+
+#--------------------------------------------------
+# Install Pyenv and Create Virtualenv
+#--------------------------------------------------
+# Switch to the system user created
+sudo -u $OE_USER -s
+
+echo -e "\n--- Install Pyenv --"
+# Install the dependencies
+sudo apt-get install -y make libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl llvm libncurses5-dev libncursesw5-dev \
+xz-utils tk-dev libffi-dev liblzma-dev
+
+# This script will clone the repositories of pyenv and also pyenv-virtualenv (a pyenv plugin to manage virtual environments) if they aren't present in your system.
+curl https://pyenv.run | bash
+
+# Add the required settings to the user's .bashrc
+printf 'export PYENV_ROOT="$HOME/.pyenv"\n' >> ~/.bashrc
+printf 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"\n' >> ~/.bashrc
+printf 'eval "$(pyenv init -)"\n' >> ~/.bashrc
+printf 'eval "$(pyenv virtualenv-init -)"\n' >> ~/.bashrc
+
+# Apply the changes to the current session
+source ~/.bashrc
+
+# Create a Virtualenv
+pyenv install $PYTHON_VIRTUALENV_VERSION
+pyenv virtualenv $PYTHON_VIRTUALENV_VERSION odoo${OE_VERSION}
+
+pyenv activate odoo${OE_VERSION}
+
+# Install Odoo requirements in virtualenv
+python -m pip install -r https://github.com/odoo/odoo/raw/${OE_VERSION}/requirements.txt
+
+# Switch back to original user
+exit
 
 #--------------------------------------------------
 # Install ODOO
